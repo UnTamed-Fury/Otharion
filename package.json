@@ -1,0 +1,39 @@
+{
+  "name": "otharion",
+  "version": "1.0.0",
+  "description": "Otharion - Dual-Platform Middleman and Next-Generation Bot Engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "onlyBuiltDependencies": [
+    "esbuild"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/index.ts",
+    "lint": "tsc --noEmit",
+    "start": "node --max-old-space-size=128 dist/index.js",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "discord",
+    "fluxer",
+    "otharion",
+    "middleman",
+    "afk",
+    "sync"
+  ],
+  "author": "untamed_fury",
+  "license": "ISC",
+  "dependencies": {
+    "@fluxerjs/core": "^3.1.0",
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
