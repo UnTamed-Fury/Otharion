@@ -1,11 +1,28 @@
 import { afkCommand } from './afk.js';
+import { bridgeCommand } from './bridge.js';
+import { configCommand } from './config.js';
+import { countingCommand } from './counting.js';
 import { createHelpCommand } from './help.js';
+import { honeypotCommand } from './honeypot.js';
 import { pingCommand } from './ping.js';
 import { statusCommand } from './status.js';
+import { stickyCommand } from './sticky.js';
 import { syncCommand } from './sync.js';
+import { initializeMarkPlugin } from '../plugins/mark/markPlugin.js';
 import type { Command } from './types.js';
 
-const baseCommands: Command[] = [pingCommand, afkCommand, syncCommand, statusCommand];
+const baseCommands: Command[] = [
+  pingCommand,
+  afkCommand,
+  syncCommand,
+  statusCommand,
+  countingCommand,
+  honeypotCommand,
+  stickyCommand,
+  bridgeCommand,
+  configCommand,
+  ...initializeMarkPlugin(),
+];
 
 export const allCommands: Command[] = [
   ...baseCommands,

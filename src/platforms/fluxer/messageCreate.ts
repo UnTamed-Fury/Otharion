@@ -5,6 +5,8 @@ import { parseCommand } from '../../core/pipeline.js';
 import { getCommand } from '../../commands/registry.js';
 import type { CommandContext } from '../../commands/types.js';
 import { config } from '../../config.js';
+import { findDiscordChannelForFluxer, isEcho, recordSentRelay } from '../../modules/bridge/bridgeEngine.js';
+import { getDiscordClient } from '../discord/client.js';
 
 const log = createLogger('FluxerPipeline');
 
@@ -12,11 +14,34 @@ export async function handleFluxerMessage(message: Message): Promise<void> {
   if (message.author.bot || message.webhookId) return;
 
   const content = message.content ?? '';
+  const channelId = message.channelId;
+
+  // 1. CROSS-PLATFORM BRIDGE RELAY TO DISCORD
+  const discordTargetChanId = findDiscordChannelForFluxer(channelId);
+  if (discordTargetChanId && !isEcho(message.author.id, content)) {
+    const dcClient = getDiscordClient();
+    if (dcClient) {
+      try {
+        const dcChan = dcClient.channels.cache.get(discordTargetChanId);
+        if (dcChan && 'send' in dcChan) {
+          recordSentRelay(message.author.id, content);
+          const authorName = message.author.username || 'User';
+          await (dcChan as any).send({
+            content: `**[Fluxer | ${authorName}]**: ${content}`,
+            allowedMentions: { parse: [] },
+          });
+        }
+      } catch (err) {
+        log.error(`Failed to relay message to Discord channel ${discordTargetChanId}:`, err);
+      }
+    }
+  }
+
+  // 2. AFK CLEARING
   const botId = message.client.user?.id;
   const botMentions = botId ? [`<@${botId}>`, `<@!${botId}>`] : [];
   const parsed = parseCommand(content, config.prefix, botMentions);
 
-  // 1. If author was AFK, clear their AFK (unless setting AFK)
   const isAfkCommand = parsed ? parsed.commandName === 'afk' || parsed.commandName === 'brb' || parsed.commandName === 'away' : false;
   if (!isAfkCommand) {
     const cleared = clearAfk(message.author.id, 'fluxer', message.guildId);
@@ -39,7 +64,7 @@ export async function handleFluxerMessage(message: Message): Promise<void> {
     }
   }
 
-  // 2. Mention notifications
+  // 3. MENTION NOTIFICATIONS
   const targetsToCheck = new Set<string>();
   const mentionRegex = /<@!?(\d+)>/g;
   let match: RegExpExecArray | null;
@@ -70,7 +95,7 @@ export async function handleFluxerMessage(message: Message): Promise<void> {
     }
   }
 
-  // 3. Command execution
+  // 4. COMMAND DISPATCH
   if (!parsed) return;
 
   const command = getCommand(parsed.commandName);

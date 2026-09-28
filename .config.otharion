@@ -1,0 +1,33 @@
+version: 1.0.0
+botName: Otharion
+prefix: o.
+mode: test
+modules:
+  counting: true
+  sticky: true
+  honeypot: true
+  bridge: true
+  afk: true
+  sync: true
+  markPlugin: false
+guilds:
+  counting_guild_test:
+    counting:
+      channelId: counting_channel_101
+      currentCount: 1
+      highScore: 1
+      lastUserId: user_1
+      hardcoreTimeoutMin: 15
+    sticky: {}
+    honeypot:
+      enabled: false
+      channels: []
+      action: ban
+      timeoutDurationMin: 1440
+      purgeMessageDays: 1
+      alertChannelId: null
+      immuneRoleIds: []
+      dmNotice: true
+      triggerOnJoinSeconds: 0
+bridge:
+  pairs: []

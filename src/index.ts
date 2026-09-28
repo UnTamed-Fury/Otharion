@@ -1,5 +1,6 @@
 import { loadAfkStore, saveAfkStore } from './core/afk/afkManager.js';
 import { loadSyncStore, saveSyncStore } from './core/sync/syncManager.js';
+import { loadOtharionConfig } from './core/selfHostConfig.js';
 import { createLogger } from './core/logger.js';
 import { startDiscordGateway, stopDiscordGateway } from './platforms/discord/client.js';
 import { startFluxerGateway, stopFluxerGateway } from './platforms/fluxer/client.js';
@@ -14,7 +15,8 @@ async function bootstrap(): Promise<void> {
   log.info(`Configured command prefix: "${config.prefix}"`);
   log.info(`Connecting to shared data directory: "${config.dataDir}"`);
 
-  // 1. Initialize shared data stores
+  // 1. Initialize self-hostable configuration and shared data stores
+  loadOtharionConfig();
   loadSyncStore();
   loadAfkStore();
 

@@ -1,0 +1,36 @@
+version: 1.0.0
+botName: Otharion
+prefix: "o."
+mode: sole # 'sole' for independent bot, 'mark' to enable AnimeX Mark proxy plugin
+
+modules:
+  counting: true
+  sticky: true
+  honeypot: true
+  bridge: true
+  afk: true
+  sync: true
+  markPlugin: false
+
+guilds:
+  "example_guild_id":
+    counting:
+      channelId: null
+      currentCount: 0
+      highScore: 0
+      lastUserId: null
+      hardcoreTimeoutMin: 5
+    sticky: {}
+    honeypot:
+      enabled: false
+      channels: []
+      action: "ban" # 'ban' | 'kick' | 'timeout' | 'quarantine'
+      timeoutDurationMin: 1440
+      purgeMessageDays: 1
+      alertChannelId: null
+      immuneRoleIds: []
+      dmNotice: true
+      triggerOnJoinSeconds: 0
+
+bridge:
+  pairs: []
