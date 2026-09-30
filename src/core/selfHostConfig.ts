@@ -3,6 +3,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { createLogger } from './logger.js';
 import { config as envConfig } from '../config.js';
+import { getOtharionDb } from './db/database.js';
 
 const log = createLogger('SelfHostConfig');
 
@@ -181,5 +182,60 @@ export function getGuildSettings(guildId: string): GuildSettings {
 export function updateGuildSettings(guildId: string, mutator: (settings: GuildSettings) => void): boolean {
   const settings = getGuildSettings(guildId);
   mutator(settings);
+
+  try {
+    const db = getOtharionDb();
+    db.updateGuild(guildId, (g) => {
+      g.counting.channelId = settings.counting.channelId;
+      g.counting.currentCount = settings.counting.currentCount;
+      g.counting.highScore = settings.counting.highScore;
+      g.counting.lastUserId = settings.counting.lastUserId;
+      g.counting.hardcoreTimeoutMin = settings.counting.hardcoreTimeoutMin;
+
+      g.honeypot.enabled = settings.honeypot.enabled;
+      g.honeypot.channels = [...settings.honeypot.channels];
+      g.honeypot.action = settings.honeypot.action;
+      g.honeypot.timeoutDurationMin = settings.honeypot.timeoutDurationMin;
+      g.honeypot.purgeMessageDays = settings.honeypot.purgeMessageDays;
+      g.honeypot.alertChannelId = settings.honeypot.alertChannelId;
+      g.honeypot.immuneRoleIds = [...settings.honeypot.immuneRoleIds];
+      g.honeypot.dmNotice = settings.honeypot.dmNotice;
+      g.honeypot.triggerOnJoinSeconds = settings.honeypot.triggerOnJoinSeconds;
+
+      for (const [chId, entry] of Object.entries(settings.sticky)) {
+        if (!g.sticky.channels[chId]) {
+          g.sticky.channels[chId] = {
+            channelId: chId,
+            content: entry.message,
+            embedTitle: null,
+            embedColor: null,
+            isEmbed: false,
+            enabled: true,
+            debounceSeconds: entry.debounceSeconds,
+            minMessages: entry.minMessages,
+            deletePrevious: true,
+            cooldownMode: 'either',
+            exemptRoleIds: [],
+            exemptUserIds: [],
+            lastMessageId: entry.lastMessageId,
+            lastPostedAt: entry.lastPostedAt,
+            messageCountSinceLast: entry.messageCountSinceLast,
+            stats: { totalPosts: 0, lastRefreshedAt: 0 },
+          };
+        } else {
+          g.sticky.channels[chId].content = entry.message;
+          g.sticky.channels[chId].debounceSeconds = entry.debounceSeconds;
+          g.sticky.channels[chId].minMessages = entry.minMessages;
+          g.sticky.channels[chId].lastMessageId = entry.lastMessageId;
+          g.sticky.channels[chId].lastPostedAt = entry.lastPostedAt;
+          g.sticky.channels[chId].messageCountSinceLast = entry.messageCountSinceLast;
+        }
+      }
+    });
+  } catch {
+    // If DB not ready yet, ignore
+  }
+
   return saveOtharionConfig();
 }
+

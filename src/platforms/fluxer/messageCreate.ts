@@ -5,7 +5,13 @@ import { parseCommand } from '../../core/pipeline.js';
 import { getCommand } from '../../commands/registry.js';
 import type { CommandContext } from '../../commands/types.js';
 import { config } from '../../config.js';
-import { findDiscordChannelForFluxer, isEcho, recordSentRelay } from '../../modules/bridge/bridgeEngine.js';
+import {
+  findDiscordPairForFluxer,
+  isEcho,
+  recordBridgeRelayEvent,
+  recordSentRelay,
+  shouldRelayMessage,
+} from '../../modules/bridge/bridgeEngine.js';
 import { getDiscordClient } from '../discord/client.js';
 
 const log = createLogger('FluxerPipeline');
@@ -17,14 +23,15 @@ export async function handleFluxerMessage(message: Message): Promise<void> {
   const channelId = message.channelId;
 
   // 1. CROSS-PLATFORM BRIDGE RELAY TO DISCORD
-  const discordTargetChanId = findDiscordChannelForFluxer(channelId);
-  if (discordTargetChanId && !isEcho(message.author.id, content)) {
+  const bridgePair = findDiscordPairForFluxer(channelId);
+  if (bridgePair && shouldRelayMessage(bridgePair, content, message.author.bot) && !isEcho(message.author.id, content)) {
     const dcClient = getDiscordClient();
     if (dcClient) {
       try {
-        const dcChan = dcClient.channels.cache.get(discordTargetChanId);
+        const dcChan = dcClient.channels.cache.get(bridgePair.discordChannelId);
         if (dcChan && 'send' in dcChan) {
           recordSentRelay(message.author.id, content);
+          recordBridgeRelayEvent(bridgePair.id, 'fx_to_dc');
           const authorName = message.author.username || 'User';
           await (dcChan as any).send({
             content: `**[Fluxer | ${authorName}]**: ${content}`,
@@ -32,7 +39,7 @@ export async function handleFluxerMessage(message: Message): Promise<void> {
           });
         }
       } catch (err) {
-        log.error(`Failed to relay message to Discord channel ${discordTargetChanId}:`, err);
+        log.error(`Failed to relay message to Discord channel ${bridgePair.discordChannelId}:`, err);
       }
     }
   }
@@ -103,37 +110,43 @@ export async function handleFluxerMessage(message: Message): Promise<void> {
 
   const ctx: CommandContext = {
     authorId: message.author.id,
-    authorTag: message.author.username || 'User',
-    channelId: message.channelId,
-    guildId: message.guildId,
+    authorTag: message.author.username || message.author.id,
+    channelId,
+    guildId: message.guildId || null,
     guildName: message.guild?.name || null,
     platform: 'fluxer',
     getPing(): number {
-      return (message.client.ws as any)?.ping ?? 0;
+      return 50;
     },
     async reply(response): Promise<void> {
       if (typeof response === 'string') {
-        await message.reply({ content: response, allowedMentions: { repliedUser: false } });
+        if (message.channel && typeof message.channel.send === 'function') {
+          await message.channel.send({ content: response });
+        } else {
+          await message.reply({ content: response });
+        }
         return;
       }
+
       const embed = new EmbedBuilder().setColor(config.embedColor);
       if (response.title) embed.setTitle(response.title);
       if (response.description) embed.setDescription(response.description);
-      if (response.fields) {
-        for (const f of response.fields) {
-          embed.addFields(f);
-        }
-      }
+      if (response.fields && response.fields.length > 0) embed.addFields(...response.fields);
 
-      await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      const options = { embeds: [embed] };
+      if (message.channel && typeof message.channel.send === 'function') {
+        await message.channel.send(options);
+      } else {
+        await message.reply(options);
+      }
     },
   };
 
   try {
     await command.execute(ctx, parsed.args, parsed.rawArgs);
-    log.info(`Executed command '${command.name}' by ${ctx.authorTag} (${ctx.authorId}) on Fluxer`);
+    log.info(`Executed command '${command.name}' by ${message.author.username} (${message.author.id}) on Fluxer`);
   } catch (error) {
-    log.error(`Error executing command '${command.name}':`, error);
+    log.error(`Error executing command '${command.name}' on Fluxer:`, error);
     await ctx.reply({
       title: 'Execution Error',
       description: 'An internal error occurred while executing the command.',

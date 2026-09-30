@@ -8,7 +8,13 @@ import { config } from '../../config.js';
 import { evaluateHoneypotTrigger } from '../../modules/honeypot/honeypotEngine.js';
 import { handleCountingMessage } from '../../modules/counting/countingEngine.js';
 import { handleStickyMessage, updateStickyLastMessageId } from '../../modules/sticky/stickyEngine.js';
-import { findFluxerChannelForDiscord, isEcho, recordSentRelay } from '../../modules/bridge/bridgeEngine.js';
+import {
+  findFluxerPairForDiscord,
+  isEcho,
+  recordBridgeRelayEvent,
+  recordSentRelay,
+  shouldRelayMessage,
+} from '../../modules/bridge/bridgeEngine.js';
 import { getFluxerClient } from '../fluxer/client.js';
 
 const log = createLogger('DiscordPipeline');
@@ -38,8 +44,16 @@ export async function handleDiscordMessage(message: Message): Promise<void> {
     });
 
     if (verdict.triggered) {
-      // Delete violating message immediately
-      await message.delete().catch(() => {});
+      if (verdict.autoDeleteTriggerMessage) {
+        await message.delete().catch(() => {});
+      }
+
+      // Optional DM notice before disciplinary action
+      if (verdict.dmNotice) {
+        const dmText = verdict.customDmMessage ||
+          `Security Notice: Your account was flagged for unauthorized activity in a honeypot security channel on **${message.guild?.name || 'the server'}** and penalty [**${verdict.action.toUpperCase()}**] was applied.`;
+        await message.author.send(dmText).catch(() => {});
+      }
 
       // Apply penalty
       try {
@@ -52,6 +66,8 @@ export async function handleDiscordMessage(message: Message): Promise<void> {
           await message.member.kick(verdict.reason);
         } else if (verdict.action === 'timeout' && message.member?.moderatable) {
           await message.member.timeout(verdict.timeoutDurationMin * 60 * 1000, verdict.reason);
+        } else if (verdict.action === 'quarantine' && verdict.quarantineRoleId && message.member) {
+          await message.member.roles.add(verdict.quarantineRoleId, verdict.reason).catch(() => {});
         }
       } catch (err) {
         log.error(`Failed to enforce honeypot action '${verdict.action}' on ${message.author.id}:`, err);
@@ -85,10 +101,25 @@ export async function handleDiscordMessage(message: Message): Promise<void> {
     const countResult = handleCountingMessage(guildId, channelId, message.author.id, content);
     if (!countResult.ignored) {
       if (countResult.valid) {
-        await message.react('✅').catch(() => {});
+        await message.react(countResult.successEmoji).catch(() => {});
+        if (countResult.isMilestone && countResult.milestoneNumber) {
+          await message.react(countResult.milestoneEmoji).catch(() => {});
+          const milestoneEmbed = new EmbedBuilder()
+            .setColor(0xffd700)
+            .setTitle(`${countResult.milestoneEmoji} Counting Milestone Reached!`)
+            .setDescription(`Incredible! <@${message.author.id}> just hit count milestone **${countResult.milestoneNumber}**!`);
+          if (message.channel && 'send' in message.channel) {
+            await (message.channel as any).send({ embeds: [milestoneEmbed] }).catch(() => {});
+          }
+        }
         return;
       } else if (countResult.ruined) {
-        await message.react('❌').catch(() => {});
+        if (countResult.autoDeleteFail) {
+          await message.delete().catch(() => {});
+        } else {
+          await message.react(countResult.failEmoji).catch(() => {});
+        }
+
         const reasonText = countResult.reason === 'double_count'
           ? 'You cannot count twice in a row!'
           : `Expected **${countResult.expectedNumber}**, but you sent **${countResult.receivedNumber}**!`;
@@ -115,25 +146,28 @@ export async function handleDiscordMessage(message: Message): Promise<void> {
         }
         return;
       }
+    } else if (countResult.autoDeleteFail) {
+      await message.delete().catch(() => {});
     }
   }
 
   // 3. CROSS-PLATFORM BRIDGE RELAY
-  const fluxerTargetChanId = findFluxerChannelForDiscord(channelId);
-  if (fluxerTargetChanId && !isEcho(message.author.id, content, message.attachments.size)) {
+  const bridgePair = findFluxerPairForDiscord(channelId);
+  if (bridgePair && shouldRelayMessage(bridgePair, content, message.author.bot) && !isEcho(message.author.id, content, message.attachments.size)) {
     const fluxerClient = getFluxerClient();
     if (fluxerClient) {
       try {
-        const fxChan = fluxerClient.channels.cache.get(fluxerTargetChanId);
+        const fxChan = fluxerClient.channels.cache.get(bridgePair.fluxerChannelId);
         if (fxChan && typeof (fxChan as any).send === 'function') {
           recordSentRelay(message.author.id, content, message.attachments.size);
+          recordBridgeRelayEvent(bridgePair.id, 'dc_to_fx');
           const authorName = message.member?.displayName || message.author.username;
           await (fxChan as any).send({
             content: `**[Discord | ${authorName}]**: ${content}`,
           });
         }
       } catch (err) {
-        log.error(`Failed to relay message to Fluxer channel ${fluxerTargetChanId}:`, err);
+        log.error(`Failed to relay message to Fluxer channel ${bridgePair.fluxerChannelId}:`, err);
       }
     }
   }
@@ -201,10 +235,11 @@ export async function handleDiscordMessage(message: Message): Promise<void> {
 
   // 6. STICKY MESSAGE EVALUATION
   if (guildId) {
-    const stickyEval = handleStickyMessage(guildId, channelId);
+    const userRoles = message.member?.roles.cache ? Array.from(message.member.roles.cache.keys()) : [];
+    const stickyEval = handleStickyMessage(guildId, channelId, message.author.id, userRoles);
     if (stickyEval.shouldPost && stickyEval.messageToPost) {
-      // Delete previous message if cached
-      if (stickyEval.previousMessageId && message.channel && 'messages' in message.channel) {
+      // Delete previous message if configured
+      if (stickyEval.deletePrevious && stickyEval.previousMessageId && message.channel && 'messages' in message.channel) {
         try {
           const oldMsg = await (message.channel as any).messages.fetch(stickyEval.previousMessageId).catch(() => null);
           if (oldMsg) await oldMsg.delete().catch(() => {});
@@ -215,11 +250,20 @@ export async function handleDiscordMessage(message: Message): Promise<void> {
 
       // Post refreshed sticky message
       if (message.channel && 'send' in message.channel) {
-        const stickyEmbed = new EmbedBuilder()
-          .setColor(config.embedColor)
-          .setDescription(`📌 ${stickyEval.messageToPost}`);
+        let sent: any = null;
+        if (stickyEval.isEmbed) {
+          const stickyEmbed = new EmbedBuilder()
+            .setColor(stickyEval.embedColor ?? config.embedColor)
+            .setTitle(stickyEval.embedTitle || 'Notice')
+            .setDescription(stickyEval.messageToPost);
+          sent = await (message.channel as any).send({ embeds: [stickyEmbed] }).catch(() => null);
+        } else {
+          const stickyEmbed = new EmbedBuilder()
+            .setColor(config.embedColor)
+            .setDescription(`📌 ${stickyEval.messageToPost}`);
+          sent = await (message.channel as any).send({ embeds: [stickyEmbed] }).catch(() => null);
+        }
 
-        const sent = await (message.channel as any).send({ embeds: [stickyEmbed] }).catch(() => null);
         if (sent) {
           updateStickyLastMessageId(guildId, channelId, sent.id);
         }

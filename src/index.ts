@@ -1,6 +1,7 @@
 import { loadAfkStore, saveAfkStore } from './core/afk/afkManager.js';
 import { loadSyncStore, saveSyncStore } from './core/sync/syncManager.js';
 import { loadOtharionConfig } from './core/selfHostConfig.js';
+import { getOtharionDb } from './core/db/database.js';
 import { createLogger } from './core/logger.js';
 import { startDiscordGateway, stopDiscordGateway } from './platforms/discord/client.js';
 import { startFluxerGateway, stopFluxerGateway } from './platforms/fluxer/client.js';
@@ -17,6 +18,7 @@ async function bootstrap(): Promise<void> {
 
   // 1. Initialize self-hostable configuration and shared data stores
   loadOtharionConfig();
+  getOtharionDb().load();
   loadSyncStore();
   loadAfkStore();
 
@@ -34,6 +36,7 @@ async function shutdown(signal: string): Promise<void> {
   log.info(`Received ${signal}. Shutting down Otharion gracefully...`);
 
   try {
+    getOtharionDb().saveImmediate();
     saveSyncStore();
     saveAfkStore();
   } catch (error) {
