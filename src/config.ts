@@ -11,10 +11,6 @@ function resolveDataDir(): string {
   if (fs.existsSync('/data')) {
     return '/data';
   }
-  const markBotData = path.resolve(process.cwd(), '../mark-bot/data');
-  if (fs.existsSync(markBotData)) {
-    return markBotData;
-  }
   const localData = path.resolve(process.cwd(), 'data');
   if (!fs.existsSync(localData)) {
     fs.mkdirSync(localData, { recursive: true });
